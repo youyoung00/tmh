@@ -184,7 +184,7 @@ class TMH:
                 
                 prompt = f"""You are an implementation agent for Task #{task['id']}
 Title: {task['title']}
-Status: {task['status']}  Priority: {task['priority']}
+Status: {task['status']}  Priority: {task.get('priority', 'medium')}
 Dependencies: {dep_str}
 Description:
 {task.get('description', '(none)')}
@@ -1221,14 +1221,49 @@ Please review the following changes and provide feedback on:
             print(f"❌ Error sending to Opus: {e}")
 
     def _get_ready_task_ids(self) -> list:
-        """Get list of ready task IDs (currently using in-progress tasks for testing)"""
-        tasks_file = '.taskmaster/tasks/tasks.json'
-        # For now, get in-progress tasks since we're testing with them
-        result = subprocess.run(['jq', '-r', f'.{self.tag}.tasks[] | select(.status == "in-progress") | .id', tasks_file], capture_output=True, text=True)
-        if result.returncode != 0:
-            print(f"Error getting ready tasks: {result.stderr}")
+        """Get list of ready task IDs (pending tasks with all dependencies completed)"""
+        try:
+            tasks_data = self._load_tasks()
+            
+            # Get tasks for current tag
+            if 'tags' in tasks_data:
+                tag_tasks = tasks_data.get('tags', {}).get(self.tag, {}).get('tasks', [])
+            else:
+                tag_tasks = tasks_data.get(self.tag, {}).get('tasks', [])
+            
+            ready_ids = []
+            for task in tag_tasks:
+                # Skip if not pending
+                if task.get('status') != 'pending':
+                    continue
+                
+                # Check if all dependencies are completed
+                dependencies = task.get('dependencies', [])
+                all_deps_done = True
+                
+                for dep_id in dependencies:
+                    dep_task = self._find_task_by_id(str(dep_id), tag_tasks)
+                    if not dep_task or dep_task.get('status') != 'done':
+                        all_deps_done = False
+                        break
+                
+                # If all dependencies are done (or no dependencies), task is ready
+                if all_deps_done:
+                    ready_ids.append(str(task.get('id')))
+            
+            # Remove duplicates and return
+            return list(set(ready_ids))
+            
+        except Exception as e:
+            print(f"Error getting ready tasks: {e}")
             return []
-        return [line.strip() for line in result.stdout.strip().split('\n') if line.strip()]
+
+    def _find_task_by_id(self, task_id: str, tasks: list) -> dict:
+        """Find a task by ID in a list of tasks"""
+        for task in tasks:
+            if str(task.get('id')) == task_id:
+                return task
+        return {}
 
     def _get_task_details(self, task_id: str) -> dict:
         """Get task details by ID"""
