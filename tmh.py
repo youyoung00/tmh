@@ -1237,6 +1237,10 @@ Please review the following changes and provide feedback on:
                 if task.get('status') != 'pending':
                     continue
                 
+                # Skip subtasks - only process main tasks
+                if 'parentTaskId' in task:
+                    continue
+                
                 # Check if all dependencies are completed
                 dependencies = task.get('dependencies', [])
                 all_deps_done = True
