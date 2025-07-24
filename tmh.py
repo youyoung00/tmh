@@ -26,12 +26,50 @@ class TMH:
                 print("task-master CLI not found. Install: npm i -g task-master-ai@latest")
                 sys.exit(1)
         
-        self.tag = os.environ.get('TAG', 'petlab')
+        self.tag = self._get_current_tag()
         self.tm_file = os.environ.get('TM_FILE', '.taskmaster/tasks/tasks.json')
         self.prompt_dir = os.environ.get('PROMPT_DIR', './prompts')
         self.worktree_base = os.environ.get('WORKTREE_BASE', '../ws')
         self.branch_prefix = os.environ.get('BRANCH_PREFIX', 'ws/')
         self.project_root = os.getcwd()  # Current working directory as project root
+
+    def _get_current_tag(self) -> str:
+        """Get current active tag from Task Master state or environment"""
+        # 1. Check environment variable first
+        if 'TAG' in os.environ:
+            return os.environ['TAG']
+        
+        # 2. Try to read from .taskmaster/state.json
+        try:
+            state_file = '.taskmaster/state.json'
+            if os.path.exists(state_file):
+                with open(state_file, 'r', encoding='utf-8') as f:
+                    state = json.load(f)
+                    if 'currentTag' in state:
+                        return state['currentTag']
+        except Exception:
+            pass
+        
+        # 3. Try to detect from tasks.json structure
+        try:
+            if os.path.exists('.taskmaster/tasks/tasks.json'):
+                with open('.taskmaster/tasks/tasks.json', 'r', encoding='utf-8') as f:
+                    tasks_data = json.load(f)
+                    # If it has a 'tags' object, use the first available tag
+                    if 'tags' in tasks_data:
+                        available_tags = list(tasks_data['tags'].keys())
+                        if available_tags:
+                            return available_tags[0]
+                    # Otherwise, look for direct tag keys (excluding 'metadata')
+                    else:
+                        for key in tasks_data.keys():
+                            if key != 'metadata' and isinstance(tasks_data[key], dict) and 'tasks' in tasks_data[key]:
+                                return key
+        except Exception:
+            pass
+        
+        # 4. Default fallback
+        return 'master'
 
     def _command_exists(self, command: str) -> bool:
         """Check if a command exists in PATH"""
@@ -571,11 +609,21 @@ EXAMPLES:
 
 ENVIRONMENT:
     TM_BIN              Task-master binary (default: tm)
-    TM_TAG              Tag context (default: petlab)
+    TAG                 Tag context (auto-detected from .taskmaster/state.json or tasks.json)
     TM_FILE             Tasks file (default: .taskmaster/tasks/tasks.json)
     WORKTREE_BASE       Worktree base directory (default: ../ws)
     BRANCH_PREFIX       Branch prefix (default: ws/)
     PROMPT_DIR          Prompt directory (default: prompts)
+    TMH_AUTO_REVIEW     Enable auto Opus review (default: false)
+
+TAG DETECTION:
+    TMH automatically detects the current active tag from:
+    1. TAG environment variable (if set)
+    2. .taskmaster/state.json (currentTag field)
+    3. First available tag in tasks.json
+    4. Fallback to 'master'
+    
+    Override with: TAG=your-tag ./tmh.py <command>
         """)
 
     def main(self) -> None:
