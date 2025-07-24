@@ -591,8 +591,8 @@ COMMANDS:
     claude-prompt <id>  Send task prompt directly to Claude CLI
     claude-ready        Interactive Claude CLI for ready tasks
     generate-scripts    Generate run_claude.sh scripts in each worktree
-    generate-review [ids] Generate diff and code review requests
-    auto-review [ids]   Generate review + auto-send to Opus
+    generate-review [ids] [--include-subtasks] Generate diff and code review requests
+    auto-review [ids] [--include-subtasks]   Generate review + auto-send to Opus
     set <status> <id>   Set task status
     show <id>           Show task details
     next                Show next task to work on
@@ -707,18 +707,29 @@ TAG DETECTION:
             self.generate_claude_scripts()
         
         elif cmd == 'generate-review':
+            # Check for --include-subtasks flag
+            include_subtasks = '--include-subtasks' in args if args else False
+            if include_subtasks and args:
+                args.remove('--include-subtasks')
+            
             task_ids = args if args else None
             if task_ids and len(task_ids) == 1 and ',' in task_ids[0]:
                 task_ids = task_ids[0].split(',')
-            self.generate_diff_and_review(task_ids)
+            self.generate_diff_and_review(task_ids, include_subtasks=include_subtasks)
         
         elif cmd == 'auto-review':
             # Enable auto-review and generate review
             os.environ['TMH_AUTO_REVIEW'] = 'true'
+            
+            # Check for --include-subtasks flag
+            include_subtasks = '--include-subtasks' in args if args else False
+            if include_subtasks and args:
+                args.remove('--include-subtasks')
+            
             task_ids = args if args else None
             if task_ids and len(task_ids) == 1 and ',' in task_ids[0]:
                 task_ids = task_ids[0].split(',')
-            self.generate_diff_and_review(task_ids)
+            self.generate_diff_and_review(task_ids, include_subtasks=include_subtasks)
         
         elif cmd in ['help', '-h', '--help']:
             self.usage()
@@ -1094,7 +1105,7 @@ echo "✅ Claude CLI execution completed for Task {task_id}"
             except Exception as e:
                 print(f"❌ Failed to create script for task {task_id}: {e}")
 
-    def generate_diff_and_review(self, task_ids: list = None) -> None:
+    def generate_diff_and_review(self, task_ids: list = None, include_subtasks: bool = False) -> None:
         """Generate diff for worktrees and request Opus code review"""
         if task_ids is None:
             # Get all in-progress tasks
@@ -1103,6 +1114,9 @@ echo "✅ Claude CLI execution completed for Task {task_id}"
             for tag_data in tasks_data.get('tags', {}).values():
                 for task in tag_data.get('tasks', []):
                     if task.get('status') == 'in-progress':
+                        # Skip subtasks unless explicitly included
+                        if not include_subtasks and 'parentTaskId' in task:
+                            continue
                         task_ids.append(str(task.get('id')))
         
         if not task_ids:
@@ -1220,7 +1234,7 @@ Please review the following changes and provide feedback on:
         except Exception as e:
             print(f"❌ Error sending to Opus: {e}")
 
-    def _get_ready_task_ids(self) -> list:
+    def _get_ready_task_ids(self, include_subtasks: bool = False) -> list:
         """Get list of ready task IDs (pending tasks with all dependencies completed)"""
         try:
             tasks_data = self._load_tasks()
@@ -1237,8 +1251,8 @@ Please review the following changes and provide feedback on:
                 if task.get('status') != 'pending':
                     continue
                 
-                # Skip subtasks - only process main tasks
-                if 'parentTaskId' in task:
+                # Skip subtasks unless explicitly included
+                if not include_subtasks and 'parentTaskId' in task:
                     continue
                 
                 # Check if all dependencies are completed
@@ -1287,10 +1301,12 @@ Please review the following changes and provide feedback on:
         return {}
 
     def _get_branch_name(self, task_id: str) -> str:
-        """Generate a branch name for a given task ID"""
+        """Generate a branch name for a given task ID (supports subtasks with dots)"""
         title = self.get_title(task_id)
         slug = self.slugify(title)
-        return f"{self.branch_prefix}{task_id}-{slug}"
+        # Convert dots to dashes for subtask IDs (e.g., 3.1 -> 3-1)
+        safe_task_id = task_id.replace('.', '-')
+        return f"{self.branch_prefix}{safe_task_id}-{slug}"
 
 
 if __name__ == '__main__':
